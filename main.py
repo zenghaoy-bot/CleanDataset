@@ -5,7 +5,8 @@ import pandas as pd
 from typing import List
 from langchain_core.prompts import ChatPromptTemplate
 from playwright.sync_api import sync_playwright
-
+from docx import Document
+import os 
 
 class Triple(BaseModel):
     head: str = Field(description="head entity must be organization / institution / system name")
@@ -52,43 +53,76 @@ Output triple example:
 
 Output strictly follow the specified JSON list‑of‑lists structure.
 """),
-    ("human", "Article content\n{content}, Victim：{victim}"),
+    ("human", "Article content\n{content}"),
 ])
 
 structured_llm = llm_langchain.with_structured_output(TripleList)
 chain = prompt | structured_llm
 
 
-df = pd.read_csv("filtered_sources.csv")
-subset_df = df[["victim","sources"]]
-records = subset_df.to_records(index=False).tolist()
-print("length of urls:", len(subset_df))
+# df = pd.read_csv("filtered_sources.csv")
+# subset_df = df[["victim","sources"]]
+# records = subset_df.to_records(index=False).tolist()
+# print("length of urls:", len(subset_df))
+folder_path = r"simulated_leak_dataset_docx/"
+sections = ['nda','email','finance','vendor_contract']
 entity_relations = []
 
+for section in sections:
+    for filename in os.listdir(folder_path+section):
+        if filename.lower().endswith(".docx"):
+            file_full_path = os.path.join(folder_path+section, filename)
+            try:
+                doc = Document(file_full_path)
+                full_text = "\n".join([para.text for para in doc.paragraphs])
+                print(f"===== {filename} =====")
+           # print(full_text)
+           # print("\n")
+                result: TripleList = chain.invoke({"content": full_text})
+                for t in result.triples:
+                    triple_item = (t.head.strip(), t.relation.strip(), t.tail.strip())
+                    entity_relations.append(triple_item)
+                    print(f"Triple: {triple_item}")
+            except Exception as e:
+                print(f"Failed read：{filename}，error：{e}")
 
-for idx, record in enumerate(records[:10]):
-    print("Index:", idx, "Record:", record)
-    victim, url = record
-    page_text = fetch_web_text(url)
-    if not page_text or len(page_text) < 100:
-        print("Page content too short, skipping URL")
-        continue
 
-    doc_content = page_text[:12000]
-    print("lnegth of doc_content:", len(doc_content))
 
-    try:
-        print(f"Processing record {idx + 1}/{len(records)}: Victim: {victim}")
-        result: TripleList = chain.invoke({"content": doc_content,"victim":victim})
-        print("done")
-        for t in result.triples:
-            triple_item = (t.head.strip(), t.relation.strip(), t.tail.strip())
-            entity_relations.append(triple_item)
-            print(f"Triple: {triple_item}")
-    except Exception as err:
-        print(f"LLM parsing error：{err}")
-print("entity_relations:", entity_relations)
+# for idx, record in enumerate(records[:10]):
+#     print("Index:", idx, "Record:", record)
+#     victim, url = record
+#     page_text = fetch_web_text(url)
+#     if not page_text or len(page_text) < 100:
+#         print("Page content too short, skipping URL")
+#         continue
+
+#     doc_content = page_text[:12000]
+#     print("lnegth of doc_content:", len(doc_content))
+
+#     try:
+#         print(f"Processing record {idx + 1}/{len(records)}: Victim: {victim}")
+#         result: TripleList = chain.invoke({"content": doc_content,"victim":victim})
+#         print("done")
+#         for t in result.triples:
+#             triple_item = (t.head.strip(), t.relation.strip(), t.tail.strip())
+#             entity_relations.append(triple_item)
+#             print(f"Triple: {triple_item}")
+#     except Exception as err:
+#         print(f"LLM parsing error：{err}")
+# print("entity_relations:", entity_relations)
 
     
 # get graph
-construct_graph(entity_relations)
+from pyvis.network import Network
+
+net = Network(height="800px", width="100%", bgcolor="#ffffff", font_color="black")
+net.barnes_hut(gravity=-8000, central_gravity=0.3, spring_length=100)
+
+for head, rel, tail in entity_relations:
+    net.add_node(head, label=head)
+    net.add_node(tail, label=tail)
+    net.add_edge(head, tail, title=rel) 
+
+net.write_html("graph.html")
+
+#construct_graph(entity_relations)
